@@ -1,0 +1,13 @@
+services:
+  disaster-registry:
+    build:
+      context: ./services/disaster-registry
+    container_name: disaster-registry-app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+      - "4848:4848"
