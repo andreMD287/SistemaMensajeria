@@ -11,3 +11,15 @@ services:
     ports:
       - "8080:8080"
       - "4848:4848"
+
+  notifications:
+    build:
+      context: ./services/notifications
+    container_name: notifications-app
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      mailhog:
+        condition: service_started
+    ports:
+      - "8081:8080"
