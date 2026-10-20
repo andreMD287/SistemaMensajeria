@@ -26,7 +26,7 @@ El sistema recibe de forma asíncrona reportes de desastres enviados por sistema
 
 ### Restricciones
 - RC-1: Docker para empaquetar; Kubernetes para el despliegue de microservicios.
-- RC-2: el consumo debe poder hacerse con un MDB (a confirmar con el profesor).
+- RC-2: el consumo se hace con un MDB (obligatorio).
 - RC-3: el correo se envía con JavaMail.
 
 **Diferido con justificación:** la seguridad (autenticación de emisores, cifrado del canal) se pospone porque el taller se valida en un entorno local de desarrollo; las credenciales son de desarrollo y están declaradas como tales.
@@ -93,7 +93,8 @@ sequenceDiagram
 ## 5. Vista de despliegue
 
 - **Desarrollo:** `docker-compose.yml` levanta RabbitMQ, PostgreSQL y MailHog; los servicios Jakarta se agregan al mismo archivo.
-- **Entrega (microservicios):** `k8s/` contiene los manifiestos (StatefulSets para RabbitMQ y PostgreSQL, Deployment para MailHog, ConfigMap con la topología). Cada microservicio se agrega como Deployment + Service.
+- **Entrega (microservicios):** `k8s/` contiene los manifiestos (StatefulSets para RabbitMQ y PostgreSQL, Deployment para MailHog, ConfigMap con la topología). Cada microservicio se agrega como Deployment + Service. Probado en Docker Desktop: RabbitMQ, PostgreSQL y MailHog quedan `Running`, la topología se carga y el Job del simulador publica en `disaster.registration.in`.
+- **Advertencia para los Deployments de los servicios:** Kubernetes inyecta variables como `RABBITMQ_PORT=tcp://...` por cada Service. Usar `enableServiceLinks: false` en los pods para no chocar con las variables de configuración propias.
 - Ambos usan la misma topología de RabbitMQ (`infra/rabbitmq/definitions.json`).
 
 ## 6. Decisiones arquitectónicas
@@ -118,8 +119,8 @@ sequenceDiagram
 - **Alternativas:** cliente AMQP directo; broker JMS nativo (ActiveMQ Artemis); Kafka con puente.
 - **Decisión:** MDB con `rabbitmq-jms` como proveedor JMS, conservando RabbitMQ.
 - **Evidencia:** la prueba `jms-probe/` consume desde Java por JMS la cola AMQP existente. Hallazgo: los mensajes publicados por AMQP llegan como `BytesMessage`, no `TextMessage`; el MDB debe tratar ambos tipos. `JMSMessageID` coincide con el `reportId`.
-- **Costo:** dependencia adicional y configuración del resource adapter en Payara; **falta validar el MDB dentro de Payara**, no solo con cliente standalone.
-- **Estado:** pendiente de confirmar con el profesor que el MDB es obligatorio y que esta opción es aceptable. Plan B: ActiveMQ Artemis.
+- **Costo:** dependencia adicional y configuración del resource adapter en el servidor de aplicaciones. Payara exige un adaptador JCA para conectar un MDB con RabbitMQ y el adaptador genérico JMS evaluado está verificado con WildFly, por lo que el equipo propone migrar a **WildFly 38 / Jakarta EE 10**. **Falta validar el MDB dentro del servidor**, no solo con cliente standalone.
+- **Estado:** MDB confirmado como obligatorio. Pendiente validar el spike del MDB en WildFly. Plan B: ActiveMQ Artemis.
 
 ### D-4. Idempotencia por `reportId`
 - **Drivers:** QA-3.
@@ -144,7 +145,7 @@ sequenceDiagram
 
 | ID | Riesgo | Mitigación |
 |---|---|---|
-| R-1 | MDB con `rabbitmq-jms` no funciona dentro de Payara. | Probar el MDB temprano; plan B con Artemis. |
+| R-1 | MDB con `rabbitmq-jms` no funciona dentro del servidor de aplicaciones (WildFly o Payara). | Probar el MDB temprano; plan B con Artemis. |
 | R-2 | Registro cae después de persistir y antes de publicar el evento; el desastre queda sin notificar. | Publicar con confirmaciones y reprocesar; patrón outbox como mejora si se justifica. |
 | R-3 | Un solo nodo de RabbitMQ es punto único de fallo. | Aceptado en el taller; clúster en un entorno real. |
 | R-4 | Credenciales de desarrollo en los manifiestos. | Declarado como diferido (seguridad). |

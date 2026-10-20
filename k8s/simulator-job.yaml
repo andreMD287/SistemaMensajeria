@@ -12,6 +12,7 @@ spec:
   template:
     spec:
       restartPolicy: Never
+      enableServiceLinks: false   # evita que K8s inyecte RABBITMQ_PORT=tcp://... por el Service 'rabbitmq'
       containers:
         - name: simulator
           image: disaster-simulator:latest
@@ -19,5 +20,6 @@ spec:
           args: ["--count", "5"]
           env:
             - { name: RABBITMQ_HOST, value: rabbitmq }
+            - { name: RABBITMQ_PORT, value: "5672" }
             - { name: RABBITMQ_USER, value: disaster }
             - { name: RABBITMQ_PASS, value: disaster }

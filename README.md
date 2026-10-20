@@ -34,7 +34,12 @@ Requiere Kubernetes activo (por ejemplo, Docker Desktop).
 kubectl kustomize --load-restrictor=LoadRestrictionsNone k8s | kubectl apply -f -
 kubectl -n disaster get pods
 kubectl -n disaster port-forward svc/rabbitmq 15672:15672
+
+# simulador como Job (imagen local)
+docker build -t disaster-simulator:latest ./simulator
+kubectl create -f k8s/simulator-job.yaml
 ```
+> En los Deployments de los servicios usar `enableServiceLinks: false`: si no, Kubernetes inyecta `RABBITMQ_PORT=tcp://...` y rompe la configuración.
 
 ## Prueba JMS
 ```bash
