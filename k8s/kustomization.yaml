@@ -1,0 +1,16 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: disaster
+resources:
+  - namespace.yaml
+  - rabbitmq.yaml
+  - postgres.yaml
+  - mailhog.yaml
+  # Los Deployments de registro-desastres y notificaciones (Rol 2) se agregan aquí
+configMapGenerator:
+  - name: rabbitmq-config
+    options:
+      disableNameSuffixHash: true
+    files:
+      - ../infra/rabbitmq/rabbitmq.conf
+      - ../infra/rabbitmq/definitions.json

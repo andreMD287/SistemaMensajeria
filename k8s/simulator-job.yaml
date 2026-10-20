@@ -1,0 +1,23 @@
+# Se ejecuta bajo demanda (no forma parte del kustomization):
+#   docker build -t disaster-simulator:latest ./simulator
+#   kubectl apply -f k8s/simulator-job.yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  generateName: report-simulator-
+  namespace: disaster
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 300
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: simulator
+          image: disaster-simulator:latest
+          imagePullPolicy: Never   # imagen local de Docker Desktop
+          args: ["--count", "5"]
+          env:
+            - { name: RABBITMQ_HOST, value: rabbitmq }
+            - { name: RABBITMQ_USER, value: disaster }
+            - { name: RABBITMQ_PASS, value: disaster }
