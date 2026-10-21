@@ -1,2 +1,2 @@
-FROM payara/server-full:6.2024.4-jdk17
-COPY target/notifications.war /opt/payara/deployments/notifications.war
+FROM quay.io/wildfly/wildfly:38.0.1.Final-jdk17
+COPY target/notifications.war /opt/jboss/wildfly/standalone/deployments/notifications.war

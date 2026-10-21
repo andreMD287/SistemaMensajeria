@@ -1,2 +1,2 @@
-FROM payara/server-full:6.2024.4-jdk17
-COPY target/disaster-registry.war /opt/payara/deployments/disaster-registry.war
+FROM quay.io/wildfly/wildfly:38.0.1.Final-jdk17
+COPY target/disaster-registry.war /opt/jboss/wildfly/standalone/deployments/disaster-registry.war

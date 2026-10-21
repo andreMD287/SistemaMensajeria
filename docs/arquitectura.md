@@ -119,8 +119,8 @@ sequenceDiagram
 - **Alternativas:** cliente AMQP directo; broker JMS nativo (ActiveMQ Artemis); Kafka con puente.
 - **Decisión:** MDB con `rabbitmq-jms` como proveedor JMS, conservando RabbitMQ.
 - **Evidencia:** la prueba `jms-probe/` consume desde Java por JMS la cola AMQP existente. Hallazgo: los mensajes publicados por AMQP llegan como `BytesMessage`, no `TextMessage`; el MDB debe tratar ambos tipos. `JMSMessageID` coincide con el `reportId`.
-- **Costo:** dependencia adicional y configuración del resource adapter en el servidor de aplicaciones. Payara exige un adaptador JCA para conectar un MDB con RabbitMQ y el adaptador genérico JMS evaluado está verificado con WildFly, por lo que el equipo propone migrar a **WildFly 38 / Jakarta EE 10**. **Falta validar el MDB dentro del servidor**, no solo con cliente standalone.
-- **Estado:** MDB confirmado como obligatorio. Pendiente validar el spike del MDB en WildFly. Plan B: ActiveMQ Artemis.
+- **Costo:** dependencia adicional y configuración del resource adapter en el servidor de aplicaciones. Payara exige un adaptador JCA para conectar un MDB con RabbitMQ y el adaptador genérico JMS evaluado está verificado con WildFly, por lo que el equipo adopta **WildFly 38 / Jakarta EE 10**. **Falta validar el MDB dentro del servidor**, no solo con cliente standalone.
+- **Estado:** MDB confirmado como obligatorio. Los dos servicios arrancan en WildFly 38; queda pendiente validar el spike del MDB. Plan B: ActiveMQ Artemis.
 
 ### D-4. Idempotencia por `reportId`
 - **Drivers:** QA-3.
@@ -145,7 +145,7 @@ sequenceDiagram
 
 | ID | Riesgo | Mitigación |
 |---|---|---|
-| R-1 | MDB con `rabbitmq-jms` no funciona dentro del servidor de aplicaciones (WildFly o Payara). | Probar el MDB temprano; plan B con Artemis. |
+| R-1 | MDB con `rabbitmq-jms` no funciona dentro del servidor de aplicaciones (WildFly). | Probar el MDB temprano; plan B con Artemis. |
 | R-2 | Registro cae después de persistir y antes de publicar el evento; el desastre queda sin notificar. | Publicar con confirmaciones y reprocesar; patrón outbox como mejora si se justifica. |
 | R-3 | Un solo nodo de RabbitMQ es punto único de fallo. | Aceptado en el taller; clúster en un entorno real. |
 | R-4 | Credenciales de desarrollo en los manifiestos. | Declarado como diferido (seguridad). |

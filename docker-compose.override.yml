@@ -10,7 +10,7 @@ services:
         condition: service_healthy
     ports:
       - "8080:8080"
-      - "4848:4848"
+      - "9990:9990"
 
   notifications:
     build:
