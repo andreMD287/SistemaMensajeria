@@ -43,6 +43,19 @@
       - "1025:1025"
       - "8025:8025"
 
+  # Simulador de sistemas emisores (bajo demanda):
+  #   docker compose run --rm simulator --count 5
+  simulator:
+    build: ./simulator
+    profiles: ["tools"]
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_USER: disaster
+      RABBITMQ_PASS: disaster
+
 volumes:
   postgres_data:
   rabbitmq_data:
