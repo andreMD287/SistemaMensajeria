@@ -24,8 +24,8 @@ spec:
             - { name: ARTEMIS_PASSWORD, value: disaster }
             - { name: ANONYMOUS_LOGIN, value: "false" }
           volumeMounts:
-            - { name: config, mountPath: /var/lib/artemis-instance/etc-override/broker-00.xml, subPath: broker-00.xml, readOnly: true }
-            - { name: data, mountPath: /var/lib/artemis-instance }
+            # broker.xml completo: la imagen lo copia sobre etc/broker.xml al crear la instancia
+            - { name: config, mountPath: /var/lib/artemis-instance/etc-override/broker.xml, subPath: broker.xml, readOnly: true }
           readinessProbe:
             tcpSocket: { port: broker }
             initialDelaySeconds: 15
@@ -37,14 +37,6 @@ spec:
         - name: config
           configMap:
             name: artemis-config
-  volumeClaimTemplates:
-    - metadata:
-        name: data
-      spec:
-        accessModes: ["ReadWriteOnce"]
-        resources:
-          requests:
-            storage: 1Gi
 ---
 apiVersion: v1
 kind: Service
