@@ -11,6 +11,8 @@ import org.apache.activemq.artemis.jms.client.ActiveMQConnectionFactory;
 
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Prueba de viabilidad del consumo asíncrono por JMS (equivalente a lo que hace un MDB).
@@ -21,12 +23,16 @@ import java.util.concurrent.TimeUnit;
  *                notifications.disaster-registered usando su nombre completo (FQQN)
  *   fail         consume un mensaje de disaster.registration.in y lo rechaza (rollback) hasta que
  *                Artemis lo mueve a disaster.registration.dlq
+ *   subscribe <sistema> [n] [segundos]
+ *                simula un sistema externo que se registra suscribiéndose al tópico disaster.events
+ *                con una suscripción durable propia (cola <sistema> creada en tiempo de ejecución),
+ *                sin cambiar Registro ni broker.xml; espera n eventos DisasterRegistered
  */
 public class JmsProbe {
 
     public static void main(String[] args) throws Exception {
         String mode = args.length > 0 ? args[0] : "reports";
-        int n = args.length > 1 ? Integer.parseInt(args[1]) : 1;
+        int n = args.length > 1 && !mode.equals("subscribe") ? Integer.parseInt(args[1]) : 1;
 
         ActiveMQConnectionFactory factory = new ActiveMQConnectionFactory(
                 "tcp://" + env("BROKER_HOST", "localhost") + ":" + env("BROKER_PORT", "61616"),
@@ -40,6 +46,9 @@ public class JmsProbe {
                     consume(connection, "disaster.events::notifications.disaster-registered", n, false);
                 }
                 case "fail" -> consume(connection, "disaster.registration.in", 6, true);
+                case "subscribe" -> subscribe(connection, args[1],
+                        args.length > 2 ? Integer.parseInt(args[2]) : 1,
+                        args.length > 3 ? Integer.parseInt(args[3]) : 60);
                 default -> throw new IllegalArgumentException(mode);
             }
         }
@@ -69,6 +78,29 @@ public class JmsProbe {
         });
         connection.start();
         if (!latch.await(15, TimeUnit.SECONDS)) {
+            System.out.println("Timeout: llegaron " + (expected - latch.getCount()) + " de " + expected);
+        }
+    }
+
+    private static void subscribe(Connection connection, String system, int expected, int seconds) throws Exception {
+        Session session = connection.createSession(false, Session.AUTO_ACKNOWLEDGE);
+        MessageConsumer consumer = session.createSharedDurableConsumer(session.createTopic("disaster.events"), system);
+        CountDownLatch latch = new CountDownLatch(expected);
+
+        consumer.setMessageListener(message -> {
+            try {
+                String body = ((TextMessage) message).getText();
+                Matcher reportId = Pattern.compile("\"reportId\"\\s*:\\s*\"([^\"]+)\"").matcher(body);
+                System.out.println("[" + system + "] eventType=" + message.getStringProperty("eventType")
+                        + " reportId=" + (reportId.find() ? reportId.group(1) : "?"));
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+            latch.countDown();
+        });
+        connection.start();
+        System.out.println("[" + system + "] suscrito a disaster.events; esperando " + expected + " evento(s)");
+        if (!latch.await(seconds, TimeUnit.SECONDS)) {
             System.out.println("Timeout: llegaron " + (expected - latch.getCount()) + " de " + expected);
         }
     }
