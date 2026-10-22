@@ -18,7 +18,7 @@ import java.util.logging.Logger;
     name = "DisasterReportRegistrationMDB",
     activationConfig = {
         @ActivationConfigProperty(propertyName = "useJNDI", propertyValue = "false"),
-        @ActivationConfigProperty(propertyName = "destination", propertyValue = "disaster.registration.in"),
+        @ActivationConfigProperty(propertyName = "destination", propertyValue = "disaster.registration.in::disaster.registration.in"),
         @ActivationConfigProperty(propertyName = "destinationType", propertyValue = "jakarta.jms.Queue")
     }
 )
