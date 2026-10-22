@@ -34,6 +34,7 @@ spec:
             - { name: PGDATA, value: /var/lib/postgresql/data/pgdata }
           volumeMounts:
             - { name: data, mountPath: /var/lib/postgresql/data }
+            - { name: init, mountPath: /docker-entrypoint-initdb.d, readOnly: true }   # crea disaster_reports y event_outbox
           readinessProbe:
             exec:
               command: ["sh", "-c", "pg_isready -U $POSTGRES_USER -d $POSTGRES_DB"]
@@ -41,6 +42,10 @@ spec:
           resources:
             requests: { cpu: 100m, memory: 128Mi }
             limits: { memory: 512Mi }
+      volumes:
+        - name: init
+          configMap:
+            name: postgres-init
   volumeClaimTemplates:
     - metadata:
         name: data

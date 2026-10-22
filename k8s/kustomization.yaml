@@ -6,10 +6,16 @@ resources:
   - artemis.yaml
   - postgres.yaml
   - mailhog.yaml
-  # Los Deployments de registro-desastres y notificaciones (Rol 2) se agregan aquí
+  - disaster-registry.yaml
+  - notifications.yaml
 configMapGenerator:
   - name: artemis-config
     options:
       disableNameSuffixHash: true
     files:
       - ../infra/artemis/broker.xml
+  - name: postgres-init
+    options:
+      disableNameSuffixHash: true
+    files:
+      - ../infra/postgres/init/001_disaster_registry.sql

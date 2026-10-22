@@ -45,6 +45,7 @@ services:
   # Simulador de sistemas emisores (bajo demanda):
   #   docker compose run --rm simulator --count 5
   simulator:
+    image: disaster-simulator:latest   # mismo nombre que usa k8s/simulator-job.yaml
     build: ./simulator
     profiles: ["tools"]
     depends_on:

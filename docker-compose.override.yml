@@ -1,5 +1,6 @@
 services:
   disaster-registry:
+    image: disaster-registry:latest   # mismo nombre que usa k8s/
     build:
       context: ./services/disaster-registry
     container_name: disaster-registry-app
@@ -18,6 +19,7 @@ services:
       - "9990:9990"
 
   notifications:
+    image: notifications:latest       # mismo nombre que usa k8s/
     build:
       context: ./services/notifications
     container_name: notifications-app

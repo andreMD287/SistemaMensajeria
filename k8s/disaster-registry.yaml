@@ -1,0 +1,51 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: disaster-registry
+  namespace: disaster
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: disaster-registry }
+  template:
+    metadata:
+      labels: { app: disaster-registry }
+    spec:
+      enableServiceLinks: false   # evita variables *_PORT=tcp://... inyectadas por cada Service
+      containers:
+        - name: disaster-registry
+          image: disaster-registry:latest
+          imagePullPolicy: Never   # imagen local: docker compose build disaster-registry
+          ports:
+            - { name: http, containerPort: 8080 }
+          env:
+            - { name: BROKER_HOST, value: artemis }
+            - { name: BROKER_PORT, value: "61616" }
+            - { name: BROKER_USER, value: disaster }
+            - { name: BROKER_PASSWORD, value: disaster }
+            - { name: DB_URL, value: "jdbc:postgresql://postgres:5432/disasters" }
+            - name: DB_USER
+              valueFrom: { secretKeyRef: { name: postgres-credentials, key: POSTGRES_USER } }
+            - name: DB_PASSWORD
+              valueFrom: { secretKeyRef: { name: postgres-credentials, key: POSTGRES_PASSWORD } }
+          readinessProbe:
+            httpGet: { path: /disaster-registry/api/health, port: http }
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /disaster-registry/api/health, port: http }
+            initialDelaySeconds: 60
+            periodSeconds: 20
+          resources:
+            requests: { cpu: 200m, memory: 512Mi }
+            limits: { memory: 1Gi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: disaster-registry
+  namespace: disaster
+spec:
+  selector: { app: disaster-registry }
+  ports:
+    - { name: http, port: 8080, targetPort: http }
