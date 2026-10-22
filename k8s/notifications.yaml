@@ -14,7 +14,7 @@ spec:
       enableServiceLinks: false   # evita variables *_PORT=tcp://... inyectadas por cada Service
       containers:
         - name: notifications
-          image: sistemamensajeria-notifications:latest
+          image: notifications:latest
           imagePullPolicy: Never   # imagen local: docker compose build notifications
           ports:
             - { name: http, containerPort: 8080 }

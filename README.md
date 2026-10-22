@@ -100,12 +100,14 @@ mvn -q exec:java -Dexec.args="fail"        # rechaza un reporte hasta que Artemi
 
 ```bash
 docker compose build disaster-registry notifications simulator   # imágenes locales que usan los manifiestos
-kubectl kustomize --load-restrictor=LoadRestrictionsNone k8s | kubectl apply -f -
+kubectl apply -k k8s
 kubectl -n disaster get pods                # artemis, postgres, mailhog, disaster-registry y notifications en Running
 
 kubectl create -f k8s/simulator-job.yaml    # Job que publica 5 reportes
 kubectl -n disaster port-forward svc/mailhog 8025:8025   # ver los correos en http://localhost:8025
 ```
+
+`k8s/config/` tiene copias de `infra/artemis/broker.xml` y `infra/postgres/init/001_disaster_registry.sql` (Kustomize solo lee archivos dentro de `k8s/`). Si se cambia uno de esos archivos, copiarlo también a `k8s/config/` para que Compose y Kubernetes usen la misma configuración.
 
 Los manifiestos usan `imagePullPolicy: Never` (imágenes locales de Docker Desktop) y `enableServiceLinks: false`, porque Kubernetes inyecta variables `*_PORT=tcp://...` por cada Service y chocarían con la configuración de los servicios.
 

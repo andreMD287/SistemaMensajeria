@@ -14,7 +14,7 @@ spec:
       enableServiceLinks: false   # evita variables *_PORT=tcp://... inyectadas por cada Service
       containers:
         - name: disaster-registry
-          image: sistemamensajeria-disaster-registry:latest
+          image: disaster-registry:latest
           imagePullPolicy: Never   # imagen local: docker compose build disaster-registry
           ports:
             - { name: http, containerPort: 8080 }

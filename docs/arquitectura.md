@@ -249,4 +249,4 @@ Con `jms-probe subscribe sistema-alertas-cruz-roja`, un sistema externo crea en 
 
 ### Kubernetes – flujo completo
 
-Despliegue con `kubectl kustomize ... | kubectl apply -f -` en Docker Desktop: los cinco pods (`artemis`, `postgres`, `mailhog`, `disaster-registry`, `notifications`) quedan `Running` y listos, y PostgreSQL crea sus tablas desde el ConfigMap `postgres-init`. El Job del simulador publicó 5 reportes, cada uno dos veces (10 mensajes): quedaron 5 reportes registrados, 5 eventos publicados, 5 correos en MailHog y 5 SMS simulados en el log.
+Despliegue con `kubectl apply -k k8s` en Docker Desktop: los cinco pods (`artemis`, `postgres`, `mailhog`, `disaster-registry`, `notifications`) quedan `Running` y listos, y PostgreSQL crea sus tablas desde el ConfigMap `postgres-init`. El Job del simulador publicó 5 reportes, cada uno dos veces (10 mensajes): quedaron 5 reportes registrados, 5 eventos publicados, 5 correos en MailHog y 5 SMS simulados en el log.
