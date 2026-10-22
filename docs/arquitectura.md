@@ -150,13 +150,40 @@ sequenceDiagram
 | R-2 | Registro cae después de persistir y antes de publicar el evento; el desastre queda sin notificar. | Publicar con confirmaciones y reprocesar; patrón outbox como mejora si se justifica. |
 | R-3 | Un solo nodo de Artemis es punto único de fallo. | Aceptado en el taller; clúster en un entorno real. |
 | R-4 | Credenciales de desarrollo en los manifiestos. | Declarado como diferido (seguridad). |
+| R-5 | Un evento que llega a `notifications.dlq` no se reprocesa automáticamente. | Aceptado en el taller; en un entorno real, monitorear la DLQ y reinyectar los mensajes. |
 
 ## 8. Trazabilidad
 
 | Escenario | Decisión | Elemento | Evidencia |
 |---|---|---|---|
-| QA-1 | D-1, D-2, D-5 | Artemis, colas durables | Prueba: detener Registro, publicar, reiniciar |
-| QA-2 | D-1, D-2 | `disaster.events` + cola por suscriptor | Prueba: agregar una cola y verificar recepción |
-| QA-3 | D-4 | Registro, PostgreSQL | Simulador con `--duplicate` |
-| QA-4 | D-2 | Artemis, servicios | Medición pendiente |
-| QA-5 | D-5, D-6 | Notificaciones, DLQ | Prueba: apagar MailHog |
+| QA-1 | D-1, D-2, D-5 | Artemis, colas durables | Registro detenido mientras el simulador publica 5 reportes: esperan en la cola y se registran al volver (0 perdidos). |
+| QA-2 | D-1, D-2 | `disaster.events` + cola por suscriptor | Pendiente de prueba: agregar una cola al tópico y verificar recepción. |
+| QA-3 | D-4 | Registro, PostgreSQL | Simulador con `--duplicate`: el mismo `reportId` enviado 2 veces deja 1 fila, 1 evento y 1 correo. |
+| QA-4 | D-2 | Artemis, servicios | Carga de 100 reportes (ver sección 9): p95 de 1,9 s hasta la publicación del evento. |
+| QA-5 | D-5, D-6 | Notificaciones, DLQ | MailHog apagado: 5 intentos de envío fallidos y el evento pasa a `notifications.dlq` sin bloquear otros. |
+
+## 9. Resultados de las pruebas
+
+Entorno: Docker Compose en un equipo de desarrollo, Artemis 2.37.0, WildFly 38, PostgreSQL 16, MailHog. Simulador con IDs de reporte nuevos en cada ejecución.
+
+### QA-4 – carga de 100 reportes (100 ms entre reportes)
+
+| Medida | Antes del lote (`LIMIT 1` cada 2 s) | Con lote de 50 por ciclo (`e9b5e14`) |
+|---|---|---|
+| Reporte → evento publicado, p50 | 58,0 s | 1,07 s |
+| Reporte → evento publicado, p95 | 108,8 s | 1,91 s |
+| Reporte → evento publicado, máximo | 114,2 s | 2,01 s |
+| Último correo respecto al último reporte | 76,5 s después (solo 54 de 100 correos a los 60 s) | 1,5 s después |
+| Reportes / eventos / correos | 100 / 100 / 59 al corte de la medición | 100 / 100 / 100, sin duplicados |
+
+El escenario QA-4 (95 % de las notificaciones en menos de 5 s) se cumple en esta carga. La medición cubre la latencia hasta la publicación del evento y el tiempo total hasta el último correo; no se midió la latencia individual de cada correo. Es una sola ejecución en un equipo local, por lo que sirve como evidencia de orden de magnitud y no como medición estadística.
+
+**Causa del incumplimiento inicial:** el publicador del outbox corría cada 2 s y publicaba un evento por ciclo (`LIMIT 1`). Se corrigió publicando hasta 50 eventos por ciclo.
+
+### Pruebas de fallo
+
+| Prueba | Resultado |
+|---|---|
+| `reportId` duplicado | 1 fila, 1 evento, 1 correo. |
+| MailHog apagado | 5 fallos de envío y el evento va a `notifications.dlq`. El mensaje queda en la DLQ y no se reenvía solo al volver MailHog (requiere reproceso manual, ver R-5). |
+| Registro apagado mientras llegan 5 reportes | Los reportes esperan en `disaster.registration.in` y se registran al volver el servicio. |
