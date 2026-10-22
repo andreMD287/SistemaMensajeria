@@ -6,8 +6,13 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      rabbitmq:
+      artemis:
         condition: service_healthy
+    environment:
+      BROKER_HOST: artemis
+      BROKER_PORT: "61616"
+      BROKER_USER: disaster
+      BROKER_PASSWORD: disaster
     ports:
       - "8080:8080"
       - "9990:9990"
@@ -17,11 +22,15 @@ services:
       context: ./services/notifications
     container_name: notifications-app
     depends_on:
-      rabbitmq:
+      artemis:
         condition: service_healthy
       mailhog:
         condition: service_started
     environment:
+      BROKER_HOST: artemis
+      BROKER_PORT: "61616"
+      BROKER_USER: disaster
+      BROKER_PASSWORD: disaster
       SMTP_HOST: mailhog
       SMTP_PORT: "1025"
       MAIL_FROM: alertas@desastres.local

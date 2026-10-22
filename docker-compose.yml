@@ -1,4 +1,4 @@
-﻿services:
+services:
   postgres:
     image: postgres:16-alpine
     container_name: disaster-postgres
@@ -17,24 +17,24 @@
       timeout: 5s
       retries: 10
 
-  rabbitmq:
-    image: rabbitmq:3-management
-    container_name: disaster-rabbitmq
+  artemis:
+    image: apache/activemq-artemis:2.37.0
+    container_name: disaster-artemis
     environment:
-      RABBITMQ_DEFAULT_USER: disaster
-      RABBITMQ_DEFAULT_PASS: disaster
+      ARTEMIS_USER: disaster
+      ARTEMIS_PASSWORD: disaster
+      ANONYMOUS_LOGIN: "false"
     ports:
-      - "5672:5672"
-      - "15672:15672"
+      - "61616:61616"   # core/JMS, AMQP, MQTT, OpenWire y STOMP
+      - "8161:8161"     # consola web
     volumes:
-      - rabbitmq_data:/var/lib/rabbitmq
-      - ./infra/rabbitmq/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
-      - ./infra/rabbitmq/definitions.json:/etc/rabbitmq/definitions.json:ro
+      - artemis_data:/var/lib/artemis-instance
+      - ./infra/artemis/broker-00.xml:/var/lib/artemis-instance/etc-override/broker-00.xml:ro
     healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/127.0.0.1/61616'"]
       interval: 5s
       timeout: 5s
-      retries: 10
+      retries: 20
 
   mailhog:
     image: mailhog/mailhog:v1.0.1
@@ -49,14 +49,15 @@
     build: ./simulator
     profiles: ["tools"]
     depends_on:
-      rabbitmq:
+      artemis:
         condition: service_healthy
     environment:
-      RABBITMQ_HOST: rabbitmq
-      RABBITMQ_USER: disaster
-      RABBITMQ_PASS: disaster
+      BROKER_HOST: artemis
+      BROKER_PORT: "61616"
+      BROKER_USER: disaster
+      BROKER_PASSWORD: disaster
 
 volumes:
   postgres_data:
-  rabbitmq_data:
+  artemis_data:
 

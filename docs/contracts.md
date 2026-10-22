@@ -1,21 +1,39 @@
 # Contratos de mensajería
 
-## Topología RabbitMQ
+Broker: **ActiveMQ Artemis** (JMS). Los servicios consumen con MDB; el simulador publica `TextMessage`.
 
-| Exchange | Tipo | Routing key | Cola destino |
+## Conexión
+
+| Dato | Valor |
+|---|---|
+| Host | `artemis` (Compose y Kubernetes) / `localhost` (desde la máquina) |
+| Puerto | `61616` (core/JMS, AMQP y MQTT). Consola web: `8161` |
+| Usuario / clave | `disaster` / `disaster` (solo desarrollo) |
+| Variables de entorno | `BROKER_HOST`, `BROKER_PORT`, `BROKER_USER`, `BROKER_PASSWORD` |
+| Pooled connection factory (WildFly) | `artemis-remote-cf` (JNDI `java:/jms/RemoteCF`) |
+
+## Destinos
+
+| Destino | Tipo | Quién publica | Quién consume |
 |---|---|---|---|
-| `disaster.reports` | direct | `report.received` | `disaster.registration.in` |
-| `disaster.events` | topic | `disaster.registered.v1` | `notifications.disaster-registered` |
-| `disaster.dlx` | direct | `disaster.registration.dlq` | `disaster.registration.dlq` |
-| `disaster.dlx` | direct | `notifications.dlq` | `notifications.dlq` |
+| `disaster.registration.in` | Cola (anycast) | Sistemas emisores / simulador | MDB de Registro |
+| `disaster.events` | Tópico (multicast) | Registro (evento `DisasterRegistered`) | Una cola por suscriptor |
+| `notifications.disaster-registered` | Cola de suscripción de `disaster.events` | — | MDB de Notificaciones, leyendo `disaster.events::notifications.disaster-registered` |
+| `disaster.registration.dlq` | Cola (DLQ) | Artemis | Revisión manual |
+| `notifications.dlq` | Cola (DLQ) | Artemis | Revisión manual |
 
-Las colas de entrada tienen `x-dead-letter-exchange=disaster.dlx`: un mensaje rechazado (`basicNack` sin requeue) termina en su DLQ.
-Otros sistemas suscritos crean su propia cola y la enlazan a `disaster.events` con `disaster.registered.v1`.
-La topología se carga desde `infra/rabbitmq/definitions.json` al iniciar el broker.
+- Reintentos: 5 entregas con 2 s entre intentos (`max-delivery-attempts`, `redelivery-delay`); agotados, el mensaje pasa a la DLQ de su destino.
+- Otros sistemas suscritos agregan su propia cola dentro de `<multicast>` de `disaster.events` en `infra/artemis/broker-00.xml`.
+- La topología se carga al iniciar el contenedor desde `infra/artemis/broker-00.xml` (`etc-override`).
 
-## Reporte entrante (`disaster.reports`)
+## Propiedades del mensaje JMS
 
-Propiedades AMQP: `content_type=application/json`, `delivery_mode=2`, `message_id=<reportId>`.
+- Cuerpo: `TextMessage` con JSON.
+- Reporte: propiedades `reportId` y `contentType=application/json`.
+- Evento: propiedad `eventType=DisasterRegistered`.
+- La idempotencia usa el `reportId` del cuerpo (o la propiedad `reportId`); Artemis asigna el `JMSMessageID`.
+
+## Reporte entrante (`disaster.registration.in`)
 
 ```json
 {
@@ -33,7 +51,7 @@ Propiedades AMQP: `content_type=application/json`, `delivery_mode=2`, `message_i
 
 Idempotencia: `reportId` es único; si se reentrega, Registro no duplica el desastre.
 
-## Evento `DisasterRegistered` (`disaster.events`)
+## Evento `DisasterRegistered` (tópico `disaster.events`)
 
 ```json
 {

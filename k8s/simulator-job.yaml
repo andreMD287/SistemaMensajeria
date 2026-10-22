@@ -12,14 +12,14 @@ spec:
   template:
     spec:
       restartPolicy: Never
-      enableServiceLinks: false   # evita que K8s inyecte RABBITMQ_PORT=tcp://... por el Service 'rabbitmq'
+      enableServiceLinks: false   # evita que K8s inyecte variables *_PORT=tcp://... por cada Service
       containers:
         - name: simulator
           image: disaster-simulator:latest
           imagePullPolicy: Never   # imagen local de Docker Desktop
           args: ["--count", "5"]
           env:
-            - { name: RABBITMQ_HOST, value: rabbitmq }
-            - { name: RABBITMQ_PORT, value: "5672" }
-            - { name: RABBITMQ_USER, value: disaster }
-            - { name: RABBITMQ_PASS, value: disaster }
+            - { name: BROKER_HOST, value: artemis }
+            - { name: BROKER_PORT, value: "61616" }
+            - { name: BROKER_USER, value: disaster }
+            - { name: BROKER_PASSWORD, value: disaster }

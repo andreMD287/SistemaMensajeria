@@ -1,26 +1,26 @@
 package co.edu.javeriana.disaster.simulator;
 
-import com.rabbitmq.client.AMQP;
-import com.rabbitmq.client.Channel;
-import com.rabbitmq.client.Connection;
-import com.rabbitmq.client.ConnectionFactory;
-import com.rabbitmq.client.MessageProperties;
+import jakarta.jms.Connection;
+import jakarta.jms.DeliveryMode;
+import jakarta.jms.MessageProducer;
+import jakarta.jms.Queue;
+import jakarta.jms.Session;
+import jakarta.jms.TextMessage;
+import org.apache.activemq.artemis.jms.client.ActiveMQConnectionFactory;
 
-import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.List;
 import java.util.Random;
 import java.util.UUID;
 
 /**
- * Simula sistemas externos que reportan desastres publicando directamente en RabbitMQ.
+ * Simula sistemas externos que reportan desastres publicando TextMessage JMS en Artemis.
  *
  * Uso: --count N (default 1) | --duplicate (reenvía cada reporte dos veces) | --interval-ms N
  */
 public class ReportSimulator {
 
-    private static final String EXCHANGE = "disaster.reports";
-    private static final String ROUTING_KEY = "report.received";
+    private static final String QUEUE = "disaster.registration.in";
 
     private static final List<String> SOURCES = List.of("IDEAM", "SGC", "BOMBEROS-BOG", "CRUZ-ROJA");
     private static final List<String> TYPES = List.of("EARTHQUAKE", "FLOOD", "LANDSLIDE", "FIRE");
@@ -45,38 +45,34 @@ public class ReportSimulator {
             }
         }
 
-        ConnectionFactory factory = new ConnectionFactory();
-        factory.setHost(env("RABBITMQ_HOST", "localhost"));
-        factory.setPort(Integer.parseInt(env("RABBITMQ_PORT", "5672")));
-        factory.setUsername(env("RABBITMQ_USER", "disaster"));
-        factory.setPassword(env("RABBITMQ_PASS", "disaster"));
+        String url = "tcp://" + env("BROKER_HOST", "localhost") + ":" + env("BROKER_PORT", "61616");
+        ActiveMQConnectionFactory factory = new ActiveMQConnectionFactory(
+                url, env("BROKER_USER", "disaster"), env("BROKER_PASSWORD", "disaster"));
 
         Random random = new Random();
-        try (Connection connection = factory.newConnection("report-simulator");
-             Channel channel = connection.createChannel()) {
-            channel.confirmSelect();
+        try (Connection connection = factory.createConnection()) {
+            Session session = connection.createSession(false, Session.AUTO_ACKNOWLEDGE);
+            Queue queue = session.createQueue(QUEUE);
+            MessageProducer producer = session.createProducer(queue);
+            producer.setDeliveryMode(DeliveryMode.PERSISTENT);
 
             for (int i = 0; i < count; i++) {
                 String reportId = UUID.randomUUID().toString();
                 String json = buildReport(reportId, random);
-                publish(channel, reportId, json);
+                publish(session, producer, reportId, json);
                 if (duplicate) {
-                    publish(channel, reportId, json);
+                    publish(session, producer, reportId, json);
                 }
                 Thread.sleep(intervalMs);
             }
-            channel.waitForConfirmsOrDie(5_000);
         }
     }
 
-    private static void publish(Channel channel, String reportId, String json) throws Exception {
-        AMQP.BasicProperties props = new AMQP.BasicProperties.Builder()
-                .contentType("application/json")
-                .contentEncoding("UTF-8")
-                .deliveryMode(MessageProperties.PERSISTENT_BASIC.getDeliveryMode())
-                .messageId(reportId)
-                .build();
-        channel.basicPublish(EXCHANGE, ROUTING_KEY, props, json.getBytes(StandardCharsets.UTF_8));
+    private static void publish(Session session, MessageProducer producer, String reportId, String json) throws Exception {
+        TextMessage message = session.createTextMessage(json);
+        message.setStringProperty("reportId", reportId);
+        message.setStringProperty("contentType", "application/json");
+        producer.send(message);
         System.out.println("Publicado reportId=" + reportId);
     }
 

@@ -1,64 +1,90 @@
 package co.edu.javeriana.disaster.probe;
 
-import com.rabbitmq.jms.admin.RMQConnectionFactory;
-import com.rabbitmq.jms.admin.RMQDestination;
-import jakarta.jms.BytesMessage;
 import jakarta.jms.Connection;
 import jakarta.jms.Message;
 import jakarta.jms.MessageConsumer;
+import jakarta.jms.MessageProducer;
+import jakarta.jms.Queue;
 import jakarta.jms.Session;
 import jakarta.jms.TextMessage;
+import org.apache.activemq.artemis.jms.client.ActiveMQConnectionFactory;
 
-import java.nio.charset.StandardCharsets;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 /**
- * Prueba de viabilidad: consume por JMS (lo que hará un MDB) la cola AMQP existente
- * disaster.registration.in, alimentada por el simulador a través de disaster.reports.
+ * Prueba de viabilidad del consumo asíncrono por JMS (equivalente a lo que hace un MDB).
+ *
+ * Modos:
+ *   reports [n]  consume n mensajes de disaster.registration.in con un MessageListener y confirma
+ *   events  [n]  publica n eventos en disaster.events y los consume desde la cola
+ *                notifications.disaster-registered usando su nombre completo (FQQN)
+ *   fail         consume un mensaje de disaster.registration.in y lo rechaza (rollback) hasta que
+ *                Artemis lo mueve a disaster.registration.dlq
  */
 public class JmsProbe {
 
     public static void main(String[] args) throws Exception {
-        int expected = args.length > 0 ? Integer.parseInt(args[0]) : 1;
+        String mode = args.length > 0 ? args[0] : "reports";
+        int n = args.length > 1 ? Integer.parseInt(args[1]) : 1;
 
-        RMQConnectionFactory factory = new RMQConnectionFactory();
-        factory.setHost("localhost");
-        factory.setPort(5672);
-        factory.setUsername("disaster");
-        factory.setPassword("disaster");
-
-        // Destino JMS mapeado a la topología AMQP existente (sin que JMS cree colas propias)
-        RMQDestination destination = new RMQDestination(
-                "disaster.registration.in", "disaster.reports", "report.received", "disaster.registration.in");
+        ActiveMQConnectionFactory factory = new ActiveMQConnectionFactory(
+                "tcp://" + env("BROKER_HOST", "localhost") + ":" + env("BROKER_PORT", "61616"),
+                env("BROKER_USER", "disaster"), env("BROKER_PASSWORD", "disaster"));
 
         try (Connection connection = factory.createConnection()) {
-            connection.start();
-            Session session = connection.createSession(false, Session.CLIENT_ACKNOWLEDGE);
-            MessageConsumer consumer = session.createConsumer(destination);
-
-            for (int i = 0; i < expected; i++) {
-                Message message = consumer.receive(5_000);
-                if (message == null) {
-                    System.out.println("Sin mas mensajes tras " + i);
-                    break;
+            switch (mode) {
+                case "reports" -> consume(connection, "disaster.registration.in", n, false);
+                case "events" -> {
+                    publishEvents(connection, n);
+                    consume(connection, "disaster.events::notifications.disaster-registered", n, false);
                 }
-                String body = readBody(message);
-                System.out.println("JMSMessageID=" + message.getJMSMessageID()
-                        + " | contentType=" + message.getStringProperty("JMS_RMQ_content_type")
-                        + " | redelivered=" + message.getJMSRedelivered());
-                System.out.println(body.replaceAll("\s+", " "));
-                message.acknowledge();
+                case "fail" -> consume(connection, "disaster.registration.in", 6, true);
+                default -> throw new IllegalArgumentException(mode);
             }
         }
     }
 
-    /** Mensajes publicados por AMQP llegan como BytesMessage; los publicados por JMS, como TextMessage. */
-    static String readBody(Message message) throws Exception {
-        if (message instanceof TextMessage text) {
-            return text.getText();
+    private static void consume(Connection connection, String destination, int expected, boolean reject) throws Exception {
+        Session session = connection.createSession(true, Session.SESSION_TRANSACTED);
+        Queue queue = session.createQueue(destination);
+        MessageConsumer consumer = session.createConsumer(queue);
+        CountDownLatch latch = new CountDownLatch(expected);
+
+        consumer.setMessageListener(message -> {
+            try {
+                String body = ((TextMessage) message).getText().replaceAll("\\s+", " ");
+                System.out.println("[" + destination + "] reportId=" + message.getStringProperty("reportId")
+                        + " deliveryCount=" + message.getIntProperty("JMSXDeliveryCount")
+                        + (reject ? " -> RECHAZADO" : "") + " | " + body);
+                if (reject) {
+                    session.rollback();
+                } else {
+                    session.commit();
+                }
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+            latch.countDown();
+        });
+        connection.start();
+        if (!latch.await(15, TimeUnit.SECONDS)) {
+            System.out.println("Timeout: llegaron " + (expected - latch.getCount()) + " de " + expected);
         }
-        BytesMessage bytes = (BytesMessage) message;
-        byte[] data = new byte[(int) bytes.getBodyLength()];
-        bytes.readBytes(data);
-        return new String(data, StandardCharsets.UTF_8);
+    }
+
+    private static void publishEvents(Connection connection, int n) throws Exception {
+        Session session = connection.createSession(false, Session.AUTO_ACKNOWLEDGE);
+        MessageProducer producer = session.createProducer(session.createTopic("disaster.events"));
+        for (int i = 0; i < n; i++) {
+            TextMessage m = session.createTextMessage("{\"eventType\":\"DisasterRegistered\",\"n\":" + i + "}");
+            m.setStringProperty("eventType", "DisasterRegistered");
+            producer.send(m);
+        }
+    }
+
+    private static String env(String name, String fallback) {
+        String value = System.getenv(name);
+        return value == null || value.isBlank() ? fallback : value;
     }
 }
