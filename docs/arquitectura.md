@@ -93,7 +93,7 @@ sequenceDiagram
 ## 5. Vista de despliegue
 
 - **Desarrollo:** `docker-compose.yml` levanta Artemis, PostgreSQL y MailHog; los servicios Jakarta se agregan al mismo archivo.
-- **Entrega (microservicios):** `k8s/` contiene los manifiestos (StatefulSets para Artemis y PostgreSQL, Deployment para MailHog, ConfigMap con la topología). Cada microservicio se agrega como Deployment + Service. Los manifiestos generan bien con kustomize, pero con Artemis **no se han probado aún en un clúster** (la versión con RabbitMQ sí se probó en Docker Desktop).
+- **Entrega (microservicios):** `k8s/` contiene los manifiestos (StatefulSets para Artemis y PostgreSQL, Deployment para MailHog, ConfigMap con la topología). Cada microservicio se agrega como Deployment + Service. Probado en Docker Desktop: Artemis, PostgreSQL y MailHog quedan `Running`, la topología se carga desde `broker.xml` (incluido el tópico `disaster.events` como MULTICAST) y el Job del simulador publica 5 reportes en `disaster.registration.in`.
 - **Advertencia para los Deployments de los servicios:** Kubernetes inyecta variables como `*_PORT=tcp://...` por cada Service. Usar `enableServiceLinks: false` en los pods para no chocar con las variables de configuración propias.
 - Ambos usan la misma topología de Artemis (`infra/artemis/broker.xml`).
 
