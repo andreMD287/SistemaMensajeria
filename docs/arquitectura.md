@@ -57,7 +57,7 @@ flowchart LR
 
 | Elemento | Responsabilidad |
 |---|---|
-| Sistema emisor / simulador | Publica el reporte en `disaster.reports`. |
+| Sistema emisor / simulador | Publica el reporte en la cola `disaster.registration.in`. |
 | ActiveMQ Artemis | Transporta reportes y eventos; aísla a emisores, Registro y Notificaciones. |
 | Registro de Desastres | Valida, deduplica por `reportId`, persiste y publica `DisasterRegistered`. |
 | Notificaciones | Consume el evento y envía correo (JavaMail) y SMS (simulado). |
@@ -92,10 +92,42 @@ sequenceDiagram
 
 ## 5. Vista de despliegue
 
-- **Desarrollo:** `docker-compose.yml` levanta Artemis, PostgreSQL y MailHog; los servicios Jakarta se agregan al mismo archivo.
-- **Entrega (microservicios):** `k8s/` contiene los manifiestos (StatefulSets para Artemis y PostgreSQL, Deployment para MailHog, ConfigMap con la topología). Cada microservicio se agrega como Deployment + Service. Probado en Docker Desktop: Artemis, PostgreSQL y MailHog quedan `Running`, la topología se carga desde `broker.xml` (incluido el tópico `disaster.events` como MULTICAST) y el Job del simulador publica 5 reportes en `disaster.registration.in`.
-- **Advertencia para los Deployments de los servicios:** Kubernetes inyecta variables como `*_PORT=tcp://...` por cada Service. Usar `enableServiceLinks: false` en los pods para no chocar con las variables de configuración propias.
-- Ambos usan la misma topología de Artemis (`infra/artemis/broker.xml`).
+```mermaid
+flowchart TB
+  subgraph HOST[Equipo de desarrollo - Docker Desktop]
+    subgraph NS[Kubernetes - namespace disaster]
+      REG[Deployment disaster-registry<br/>WildFly 38 + MDB]
+      NOT[Deployment notifications<br/>WildFly 38 + MDB + JavaMail]
+      ART[(StatefulSet artemis<br/>ActiveMQ Artemis 2.37)]
+      PG[(StatefulSet postgres<br/>PostgreSQL 16 + PVC)]
+      MH[Deployment mailhog<br/>SMTP de pruebas]
+      JOB[Job report-simulator]
+      CM1[/ConfigMap artemis-config<br/>broker.xml/]
+      CM2[/ConfigMap postgres-init<br/>tablas/]
+    end
+  end
+  JOB -->|JMS 61616| ART
+  REG -->|JMS 61616| ART
+  NOT -->|JMS 61616| ART
+  REG -->|JDBC 5432| PG
+  NOT -->|SMTP 1025| MH
+  CM1 -.-> ART
+  CM2 -.-> PG
+```
+
+| Nodo | Artefacto | Imagen |
+|---|---|---|
+| `disaster-registry` (Deployment + Service) | `disaster-registry.war` en WildFly 38 (`standalone-full`) | `disaster-registry:latest`, construida con Dockerfile multi-etapa |
+| `notifications` (Deployment + Service) | `notifications.war` en WildFly 38 (`standalone-full`) | `notifications:latest`, construida con Dockerfile multi-etapa |
+| `artemis` (StatefulSet + Service) | `broker.xml` completo desde ConfigMap | `apache/activemq-artemis:2.37.0` |
+| `postgres` (StatefulSet + Service + PVC) | Tablas creadas con el ConfigMap `postgres-init` | `postgres:16-alpine` |
+| `mailhog` (Deployment + Service) | Servidor SMTP de pruebas | `mailhog/mailhog:v1.0.1` |
+| `report-simulator` (Job bajo demanda) | Publica reportes de prueba | `disaster-simulator:latest` |
+
+- **Desarrollo:** `docker-compose.yml` y `docker-compose.override.yml` levantan los mismos seis componentes con las mismas imágenes.
+- **Entrega (microservicios):** `k8s/` se aplica con kustomize. Probado en Docker Desktop: los cinco pods quedan `Running` y listos (probes HTTP sobre `/api/health`), y el Job del simulador recorre el flujo completo (ver sección 9).
+- **Configuración por entorno:** los servicios leen `BROKER_*`, `DB_*` y `SMTP_*`. Los pods usan `enableServiceLinks: false` porque Kubernetes inyecta variables `*_PORT=tcp://...` por cada Service que chocarían con esa configuración.
+- **Topología del broker:** la imagen de Artemis solo copia `etc-override/broker.xml` al crear la instancia (no fusiona archivos); por eso se monta un `broker.xml` completo y el broker no persiste su directorio de instancia.
 
 ## 6. Decisiones arquitectónicas
 
@@ -120,7 +152,8 @@ sequenceDiagram
 - **Evidencia del descarte:** el spike en WildFly 38 con RabbitMQ despliega el MDB y el resource adapter, pero al activar el consumo falla con `UnsupportedOperationException` en `RMQSession.setMessageListener`.
 - **Decisión:** MDB sobre Artemis, con pooled connection factory `artemis-remote-cf`.
 - **Evidencia de viabilidad (`jms-probe/`, Artemis 2.37.0):** consumo asíncrono con `MessageListener` (5 de 5 reportes), lectura de la cola de suscripción por su nombre completo `disaster.events::notifications.disaster-registered` y paso a `disaster.registration.dlq` tras 5 entregas fallidas.
-- **Costo:** el MDB debe validarse dentro de WildFly (la prueba fue con cliente standalone); el literal "RabbitMQ" del enunciado se sustituye por Artemis, que habla MQTT.
+- **Validación en WildFly:** ambos MDB funcionan con `artemis-remote-cf`. Detalle encontrado en las pruebas: aunque el pooled connection factory tiene `enable-amq1-prefix=false`, un MDB con `destination=disaster.registration.in` se enlazaba a `jms.queue.disaster.registration.in` y no consumía; se resolvió usando el nombre completo `disaster.registration.in::disaster.registration.in`, igual que Notificaciones.
+- **Costo:** dependencia del adaptador de recursos de Artemis en WildFly; el literal "RabbitMQ" del enunciado se sustituye por Artemis, que habla MQTT.
 - **Estado:** aceptada.
 
 ### D-4. Idempotencia por `reportId`
@@ -128,10 +161,11 @@ sequenceDiagram
 - **Decisión:** `reportId` único en la tabla de desastres; si ya existe, se confirma el mensaje sin publicar evento.
 - **Costo:** una consulta/restricción por mensaje; un `reportId` mal generado por el emisor haría que se descarten reportes distintos.
 
-### D-5. Reintentos y cola de mensajes fallidos (DLX/DLQ)
+### D-5. Reintentos y colas de mensajes fallidos (DLQ)
 - **Drivers:** QA-1, QA-5.
-- **Decisión:** `disaster.dlx` con `disaster.registration.dlq` y `notifications.dlq`; las colas de entrada rechazan hacia ellas.
-- **Costo:** los mensajes en DLQ requieren monitoreo y reproceso manual.
+- **Decisión:** en `broker.xml`, `disaster.registration.in` y `disaster.events` tienen `max-delivery-attempts=5` y `redelivery-delay=2000`; agotados los intentos, Artemis mueve el mensaje a `disaster.registration.dlq` o `notifications.dlq`. Los MDB lanzan excepción ante un fallo para que la transacción se revierta y el broker reintente.
+- **Beneficio:** un fallo puntual (SMTP caído, base de datos ocupada) se reintenta solo, y un mensaje que nunca se puede procesar no bloquea a los demás.
+- **Costo:** los mensajes en DLQ requieren monitoreo y reproceso manual (R-5).
 
 ### D-6. Correo con JavaMail hacia MailHog; SMS simulado
 - **Drivers:** RC-3, QA-5.
@@ -142,12 +176,28 @@ sequenceDiagram
 - **Decisión:** solo Registro accede a la base de datos; Notificaciones no comparte esquema.
 - **Costo:** si Notificaciones necesita datos adicionales debe recibirlos en el evento.
 
+### D-8. Outbox transaccional para publicar `DisasterRegistered`
+- **Drivers:** QA-1, QA-3, QA-4.
+- **Alternativas:** publicar el evento desde el MDB justo después de guardar el reporte; transacción distribuida (XA) entre PostgreSQL y Artemis.
+- **Decisión:** Registro guarda el reporte y el evento en `event_outbox` en la misma transacción; un publicador (`@Schedule` cada 2 s) envía al tópico hasta 50 eventos pendientes por ciclo y marca `published_at`.
+- **Beneficio:** si Registro cae entre guardar y publicar, el evento no se pierde: queda pendiente y se publica en el siguiente ciclo (mitiga R-2). Evita la complejidad de XA.
+- **Costo:** añade hasta 2 s de latencia y la posibilidad de publicar un evento dos veces si el servicio cae justo después de enviarlo y antes de marcarlo (los consumidores deben tolerar duplicados). La primera versión publicaba un evento por ciclo y no cumplía QA-4; con lotes de 50 se cumple (sección 9).
+- **Estado:** aceptada.
+
+### D-9. WildFly 38 como contenedor Jakarta EE
+- **Drivers:** RC-2 (MDB), RC-1.
+- **Alternativas:** Payara 6.
+- **Decisión:** Registro y Notificaciones corren en WildFly 38 (Jakarta EE 10, perfil `standalone-full`). El pooled connection factory remoto `artemis-remote-cf` se crea en la imagen con `configure-artemis.cli`.
+- **Motivo:** Payara exige un adaptador JCA aparte para conectar un MDB con un broker externo, mientras que WildFly trae integrado el adaptador de Artemis.
+- **Costo:** configuración del servidor mediante scripts CLI dentro de la imagen; imágenes más pesadas que un runtime ligero.
+- **Estado:** aceptada.
+
 ## 7. Riesgos y puntos de sensibilidad
 
 | ID | Riesgo | Mitigación |
 |---|---|---|
-| R-1 | El MDB sobre Artemis no funciona en WildFly con el pooled connection factory remoto. | Probar el MDB temprano; usar el subsistema de mensajería embebido de WildFly como alternativa. |
-| R-2 | Registro cae después de persistir y antes de publicar el evento; el desastre queda sin notificar. | Publicar con confirmaciones y reprocesar; patrón outbox como mejora si se justifica. |
+| R-1 | El MDB sobre Artemis no funciona en WildFly con el pooled connection factory remoto. | **Mitigado:** ambos MDB consumen en WildFly usando el nombre completo de la cola (D-3). |
+| R-2 | Registro cae después de persistir y antes de publicar el evento; el desastre queda sin notificar. | **Mitigado** con el outbox transaccional (D-8): el evento queda pendiente y se publica en el siguiente ciclo. |
 | R-3 | Un solo nodo de Artemis es punto único de fallo. | Aceptado en el taller; clúster en un entorno real. |
 | R-4 | Credenciales de desarrollo en los manifiestos. | Declarado como diferido (seguridad). |
 | R-5 | Un evento que llega a `notifications.dlq` no se reprocesa automáticamente. | Aceptado en el taller; en un entorno real, monitorear la DLQ y reinyectar los mensajes. |
@@ -157,7 +207,7 @@ sequenceDiagram
 | Escenario | Decisión | Elemento | Evidencia |
 |---|---|---|---|
 | QA-1 | D-1, D-2, D-5 | Artemis, colas durables | Registro detenido mientras el simulador publica 5 reportes: esperan en la cola y se registran al volver (0 perdidos). |
-| QA-2 | D-1, D-2 | `disaster.events` + cola por suscriptor | Pendiente de prueba: agregar una cola al tópico y verificar recepción. |
+| QA-2 | D-1, D-2 | `disaster.events` + cola por suscriptor | Un sistema externo nuevo se suscribe al tópico con su propia suscripción durable, sin cambiar Registro ni `broker.xml`, y recibe 5 de 5 eventos (sección 9). |
 | QA-3 | D-4 | Registro, PostgreSQL | Simulador con `--duplicate`: el mismo `reportId` enviado 2 veces deja 1 fila, 1 evento y 1 correo. |
 | QA-4 | D-2 | Artemis, servicios | Carga de 100 reportes (ver sección 9): p95 de 1,9 s hasta la publicación del evento. |
 | QA-5 | D-5, D-6 | Notificaciones, DLQ | MailHog apagado: 5 intentos de envío fallidos y el evento pasa a `notifications.dlq` sin bloquear otros. |
@@ -187,3 +237,16 @@ El escenario QA-4 (95 % de las notificaciones en menos de 5 s) se cumple en esta
 | `reportId` duplicado | 1 fila, 1 evento, 1 correo. |
 | MailHog apagado | 5 fallos de envío y el evento va a `notifications.dlq`. El mensaje queda en la DLQ y no se reenvía solo al volver MailHog (requiere reproceso manual, ver R-5). |
 | Registro apagado mientras llegan 5 reportes | Los reportes esperan en `disaster.registration.in` y se registran al volver el servicio. |
+
+### QA-2 – un sistema externo nuevo se suscribe sin cambiar el sistema
+
+Con `jms-probe subscribe sistema-alertas-cruz-roja`, un sistema externo crea en tiempo de ejecución su propia suscripción durable al tópico `disaster.events`. No se modificó Registro, Notificaciones ni `broker.xml`.
+
+| Paso | Resultado |
+|---|---|
+| Sistema externo apagado; se publican 2 reportes | Notificaciones envía 2 correos; los 2 eventos quedan pendientes en la cola `sistema-alertas-cruz-roja`. |
+| Sistema externo encendido; se publican 3 reportes más | El sistema externo recibe 5 de 5 eventos (los 2 pendientes y los 3 nuevos); Notificaciones suma 5 correos. |
+
+### Kubernetes – flujo completo
+
+Despliegue con `kubectl kustomize ... | kubectl apply -f -` en Docker Desktop: los cinco pods (`artemis`, `postgres`, `mailhog`, `disaster-registry`, `notifications`) quedan `Running` y listos, y PostgreSQL crea sus tablas desde el ConfigMap `postgres-init`. El Job del simulador publicó 5 reportes, cada uno dos veces (10 mensajes): quedaron 5 reportes registrados, 5 eventos publicados, 5 correos en MailHog y 5 SMS simulados en el log.
