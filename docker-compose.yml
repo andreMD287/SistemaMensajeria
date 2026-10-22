@@ -28,8 +28,7 @@ services:
       - "61616:61616"   # core/JMS, AMQP, MQTT, OpenWire y STOMP
       - "8161:8161"     # consola web
     volumes:
-      - artemis_data:/var/lib/artemis-instance
-      - ./infra/artemis/broker-00.xml:/var/lib/artemis-instance/etc-override/broker-00.xml:ro
+      - ./infra/artemis/broker.xml:/var/lib/artemis-instance/etc-override/broker.xml:ro
     healthcheck:
       test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/127.0.0.1/61616'"]
       interval: 5s
@@ -59,5 +58,4 @@ services:
 
 volumes:
   postgres_data:
-  artemis_data:
 

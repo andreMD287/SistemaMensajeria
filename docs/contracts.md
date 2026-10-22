@@ -23,8 +23,8 @@ Broker: **ActiveMQ Artemis** (JMS). Los servicios consumen con MDB; el simulador
 | `notifications.dlq` | Cola (DLQ) | Artemis | Revisión manual |
 
 - Reintentos: 5 entregas con 2 s entre intentos (`max-delivery-attempts`, `redelivery-delay`); agotados, el mensaje pasa a la DLQ de su destino.
-- Otros sistemas suscritos agregan su propia cola dentro de `<multicast>` de `disaster.events` en `infra/artemis/broker-00.xml`.
-- La topología se carga al iniciar el contenedor desde `infra/artemis/broker-00.xml` (`etc-override`).
+- Otros sistemas suscritos agregan su propia cola dentro de `<multicast>` de `disaster.events` en `infra/artemis/broker.xml`.
+- La topología se carga al iniciar el contenedor desde `infra/artemis/broker.xml` (`etc-override/broker.xml`, copiado sobre `etc/broker.xml` al crear la instancia; la imagen no fusiona archivos).
 
 ## Propiedades del mensaje JMS
 
