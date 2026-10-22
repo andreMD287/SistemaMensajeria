@@ -6,7 +6,6 @@ import jakarta.ejb.Startup;
 import jakarta.ejb.TransactionAttribute;
 import jakarta.ejb.TransactionAttributeType;
 import jakarta.inject.Inject;
-import jakarta.jms.ConnectionFactory;
 import jakarta.jms.DeliveryMode;
 import jakarta.jms.JMSContext;
 import jakarta.jms.JMSProducer;
@@ -16,6 +15,8 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -25,6 +26,8 @@ import java.util.logging.Logger;
 public class DisasterEventOutboxPublisher {
     private static final Logger LOG =
         Logger.getLogger(DisasterEventOutboxPublisher.class.getName());
+
+    private static final int BATCH_SIZE = 50;
 
     @Inject
     @jakarta.jms.JMSConnectionFactory("java:/jms/RemoteCF")
@@ -38,11 +41,11 @@ public class DisasterEventOutboxPublisher {
         String password = env("DB_PASSWORD", "disaster");
 
         String selectSql = """
-            SELECT event_id, event_type, event_payload::text
+            SELECT event_id, event_type, event_payload::text AS event_payload
             FROM event_outbox
             WHERE published_at IS NULL
             ORDER BY created_at
-            LIMIT 1
+            LIMIT 50
             FOR UPDATE SKIP LOCKED
             """;
 
@@ -50,51 +53,57 @@ public class DisasterEventOutboxPublisher {
             connection.setAutoCommit(false);
 
             try {
-                UUID eventId;
-                String eventType;
-                String eventPayload;
+                List<PendingEvent> events = new ArrayList<>();
 
                 try (PreparedStatement select = connection.prepareStatement(selectSql);
                      ResultSet result = select.executeQuery()) {
-                    if (!result.next()) {
-                        connection.commit();
-                        return;
+                    while (result.next()) {
+                        events.add(new PendingEvent(
+                            result.getObject("event_id", UUID.class),
+                            result.getString("event_type"),
+                            result.getString("event_payload")
+                        ));
                     }
+                }
 
-                    eventId = result.getObject("event_id", UUID.class);
-                    eventType = result.getString("event_type");
-                    eventPayload = result.getString("event_payload");
+                if (events.isEmpty()) {
+                    connection.commit();
+                    return;
                 }
 
                 Topic topic = jmsContext.createTopic("disaster.events");
-                JMSProducer producer = jmsContext.createProducer()
-                    .setDeliveryMode(DeliveryMode.PERSISTENT)
-                    .setProperty("eventType", eventType);
-
-                producer.send(topic, eventPayload);
 
                 try (PreparedStatement update = connection.prepareStatement("""
                     UPDATE event_outbox
                     SET published_at = CURRENT_TIMESTAMP
                     WHERE event_id = ? AND published_at IS NULL
                     """)) {
-                    update.setObject(1, eventId);
-                    if (update.executeUpdate() != 1) {
-                        throw new IllegalStateException(
-                            "No se pudo marcar como publicado el evento " + eventId
-                        );
+                    for (PendingEvent event : events) {
+                        JMSProducer producer = jmsContext.createProducer()
+                            .setDeliveryMode(DeliveryMode.PERSISTENT)
+                            .setProperty("eventType", event.eventType());
+
+                        producer.send(topic, event.payload());
+
+                        update.setObject(1, event.eventId());
+                        if (update.executeUpdate() != 1) {
+                            throw new IllegalStateException(
+                                "No se pudo marcar como publicado el evento "
+                                    + event.eventId()
+                            );
+                        }
                     }
                 }
 
                 connection.commit();
-                LOG.info("Evento publicado en disaster.events: " + eventId);
+                LOG.info("Eventos publicados en disaster.events: " + events.size());
             } catch (Exception exception) {
                 connection.rollback();
                 throw exception;
             }
         } catch (Exception exception) {
             LOG.log(Level.WARNING,
-                "No se pudo publicar el siguiente evento del outbox; se reintentará",
+                "No se pudo publicar el lote del outbox; se reintentara",
                 exception);
         }
     }
@@ -102,5 +111,8 @@ public class DisasterEventOutboxPublisher {
     private static String env(String key, String fallback) {
         String value = System.getenv(key);
         return value == null || value.isBlank() ? fallback : value;
+    }
+
+    private record PendingEvent(UUID eventId, String eventType, String payload) {
     }
 }
