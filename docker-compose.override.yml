@@ -21,5 +21,12 @@ services:
         condition: service_healthy
       mailhog:
         condition: service_started
+    environment:
+      SMTP_HOST: mailhog
+      SMTP_PORT: "1025"
+      MAIL_FROM: alertas@desastres.local
+      NOTIFICATION_EMAIL_TO: pruebas@desastres.local
+      ENABLE_TEST_ENDPOINT: "true"
+      SMS_PHONE: "+573000000000"
     ports:
       - "8081:8080"
