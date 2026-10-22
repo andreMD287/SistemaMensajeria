@@ -13,9 +13,9 @@ configMapGenerator:
     options:
       disableNameSuffixHash: true
     files:
-      - ../infra/artemis/broker.xml
+      - config/broker.xml
   - name: postgres-init
     options:
       disableNameSuffixHash: true
     files:
-      - ../infra/postgres/init/001_disaster_registry.sql
+      - config/001_disaster_registry.sql
