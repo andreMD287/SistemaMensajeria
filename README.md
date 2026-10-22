@@ -7,7 +7,7 @@ Flujo: `Simulador → Artemis → Registro de Desastres → PostgreSQL → Disas
 ## Estructura
 | Carpeta | Contenido |
 |---|---|
-| `infra/` | Topología de Artemis (`artemis/broker-00.xml`) y scripts SQL de PostgreSQL |
+| `infra/` | Topología de Artemis (`artemis/broker.xml`) y scripts SQL de PostgreSQL |
 | `services/disaster-registry/` | Microservicio Registro de Desastres |
 | `services/notifications/` | Microservicio Notificaciones |
 | `simulator/` | Publica reportes de prueba en `disaster.reports` |

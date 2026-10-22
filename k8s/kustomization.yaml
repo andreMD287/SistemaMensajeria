@@ -12,4 +12,4 @@ configMapGenerator:
     options:
       disableNameSuffixHash: true
     files:
-      - ../infra/artemis/broker-00.xml
+      - ../infra/artemis/broker.xml
