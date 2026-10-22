@@ -1,0 +1,58 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: artemis
+  namespace: disaster
+spec:
+  serviceName: artemis
+  replicas: 1
+  selector:
+    matchLabels: { app: artemis }
+  template:
+    metadata:
+      labels: { app: artemis }
+    spec:
+      enableServiceLinks: false
+      containers:
+        - name: artemis
+          image: apache/activemq-artemis:2.37.0
+          ports:
+            - { name: broker, containerPort: 61616 }
+            - { name: console, containerPort: 8161 }
+          env:
+            - { name: ARTEMIS_USER, value: disaster }       # solo desarrollo
+            - { name: ARTEMIS_PASSWORD, value: disaster }
+            - { name: ANONYMOUS_LOGIN, value: "false" }
+          volumeMounts:
+            - { name: config, mountPath: /var/lib/artemis-instance/etc-override/broker-00.xml, subPath: broker-00.xml, readOnly: true }
+            - { name: data, mountPath: /var/lib/artemis-instance }
+          readinessProbe:
+            tcpSocket: { port: broker }
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          resources:
+            requests: { cpu: 100m, memory: 384Mi }
+            limits: { memory: 1Gi }
+      volumes:
+        - name: config
+          configMap:
+            name: artemis-config
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: artemis
+  namespace: disaster
+spec:
+  selector: { app: artemis }
+  ports:
+    - { name: broker, port: 61616, targetPort: broker }
+    - { name: console, port: 8161, targetPort: console }

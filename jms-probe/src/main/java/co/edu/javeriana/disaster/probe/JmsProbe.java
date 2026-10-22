@@ -53,11 +53,10 @@ public class JmsProbe {
 
         consumer.setMessageListener(message -> {
             try {
-                String body = ((TextMessage) message).getText().replaceAll("\s+", " ");
+                String body = ((TextMessage) message).getText().replaceAll("\\s+", " ");
                 System.out.println("[" + destination + "] reportId=" + message.getStringProperty("reportId")
                         + " deliveryCount=" + message.getIntProperty("JMSXDeliveryCount")
-                        + (reject ? " -> RECHAZADO" : "") + "
-  " + body);
+                        + (reject ? " -> RECHAZADO" : "") + " | " + body);
                 if (reject) {
                     session.rollback();
                 } else {

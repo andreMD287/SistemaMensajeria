@@ -5,7 +5,7 @@
 El sistema recibe de forma asíncrona reportes de desastres enviados por sistemas externos (entidades de emergencias), los registra y notifica a los sistemas y personas interesadas mediante mensajería, correo electrónico o SMS.
 
 - **Estilo elegido:** microservicios con integración orientada a eventos.
-- **Tecnologías exigidas por el enunciado:** broker de mensajería (RabbitMQ), JavaMail, Docker y, por ser microservicios, Kubernetes. El consumo se hace con MDB sobre JMS.
+- **Tecnologías exigidas por el enunciado:** broker de mensajería (ActiveMQ Artemis, que además habla MQTT), JavaMail, Docker y, por ser microservicios, Kubernetes. El consumo se hace con MDB sobre JMS.
 - **Fuera de alcance:** evaluación de daños, personas afectadas, reconstrucción y GIS. Los diferimos porque el taller se valida con un flujo vertical.
 
 ## 2. Requisitos arquitectónicamente significativos
@@ -37,7 +37,7 @@ El sistema recibe de forma asíncrona reportes de desastres enviados por sistema
 flowchart LR
   EXT[Sistemas emisores<br/>IDEAM SGC Bomberos]
   subgraph K8S[Kubernetes - namespace disaster]
-    RMQ[(RabbitMQ<br/>exchanges y colas)]
+    RMQ[(ActiveMQ Artemis<br/>colas y topico)]
     REG[Registro de Desastres<br/>Jakarta EE - MDB]
     NOT[Notificaciones<br/>Jakarta EE - MDB + JavaMail]
     PG[(PostgreSQL)]
@@ -58,7 +58,7 @@ flowchart LR
 | Elemento | Responsabilidad |
 |---|---|
 | Sistema emisor / simulador | Publica el reporte en `disaster.reports`. |
-| RabbitMQ | Transporta reportes y eventos; aísla a emisores, Registro y Notificaciones. |
+| ActiveMQ Artemis | Transporta reportes y eventos; aísla a emisores, Registro y Notificaciones. |
 | Registro de Desastres | Valida, deduplica por `reportId`, persiste y publica `DisasterRegistered`. |
 | Notificaciones | Consume el evento y envía correo (JavaMail) y SMS (simulado). |
 | PostgreSQL | Fuente de verdad de los desastres registrados. |
@@ -69,21 +69,21 @@ flowchart LR
 ```mermaid
 sequenceDiagram
   participant S as Sistema emisor
-  participant X as RabbitMQ
+  participant X as Artemis
   participant R as Registro de Desastres
   participant D as PostgreSQL
   participant N as Notificaciones
   participant M as MailHog
-  S->>X: publica reporte (disaster.reports, report.received)
-  X->>R: entrega a disaster.registration.in
+  S->>X: publica reporte (cola disaster.registration.in)
+  X->>R: entrega al MDB de Registro
   R->>D: INSERT si reportId no existe
   alt reportId ya registrado
     R-->>X: ack sin publicar evento
   else nuevo reporte
-    R->>X: publica DisasterRegistered (disaster.events)
+    R->>X: publica DisasterRegistered (topico disaster.events)
     R-->>X: ack
   end
-  X->>N: entrega a notifications.disaster-registered
+  X->>N: entrega al MDB de Notificaciones
   N->>M: correo por SMTP (JavaMail)
   N->>N: SMS simulado en log
   N-->>X: ack
@@ -92,10 +92,10 @@ sequenceDiagram
 
 ## 5. Vista de despliegue
 
-- **Desarrollo:** `docker-compose.yml` levanta RabbitMQ, PostgreSQL y MailHog; los servicios Jakarta se agregan al mismo archivo.
-- **Entrega (microservicios):** `k8s/` contiene los manifiestos (StatefulSets para RabbitMQ y PostgreSQL, Deployment para MailHog, ConfigMap con la topología). Cada microservicio se agrega como Deployment + Service. Probado en Docker Desktop: RabbitMQ, PostgreSQL y MailHog quedan `Running`, la topología se carga y el Job del simulador publica en `disaster.registration.in`.
-- **Advertencia para los Deployments de los servicios:** Kubernetes inyecta variables como `RABBITMQ_PORT=tcp://...` por cada Service. Usar `enableServiceLinks: false` en los pods para no chocar con las variables de configuración propias.
-- Ambos usan la misma topología de RabbitMQ (`infra/rabbitmq/definitions.json`).
+- **Desarrollo:** `docker-compose.yml` levanta Artemis, PostgreSQL y MailHog; los servicios Jakarta se agregan al mismo archivo.
+- **Entrega (microservicios):** `k8s/` contiene los manifiestos (StatefulSets para Artemis y PostgreSQL, Deployment para MailHog, ConfigMap con la topología). Cada microservicio se agrega como Deployment + Service. Los manifiestos generan bien con kustomize, pero con Artemis **no se han probado aún en un clúster** (la versión con RabbitMQ sí se probó en Docker Desktop).
+- **Advertencia para los Deployments de los servicios:** Kubernetes inyecta variables como `*_PORT=tcp://...` por cada Service. Usar `enableServiceLinks: false` en los pods para no chocar con las variables de configuración propias.
+- Ambos usan la misma topología de Artemis (`infra/artemis/broker-00.xml`).
 
 ## 6. Decisiones arquitectónicas
 
@@ -106,21 +106,22 @@ sequenceDiagram
 - **Beneficio:** cada servicio se despliega, escala y falla por separado; agregar suscriptores no toca a Registro (QA-2).
 - **Costo:** mayor complejidad operativa (broker, dos despliegues, consistencia eventual) y más difícil de depurar que un monolito.
 
-### D-2. Mensajería asíncrona con RabbitMQ (exchange directo + exchange de eventos tipo topic)
+### D-2. Mensajería asíncrona con ActiveMQ Artemis (cola de reportes + tópico de eventos)
 - **Drivers:** QA-1, QA-2, QA-5.
-- **Alternativas:** Kafka (retención y reproducción del log, mayor carga operativa para el volumen del taller); MQTT (orientado a dispositivos IoT, pocas garantías de enrutamiento).
-- **Decisión:** RabbitMQ con colas durables y mensajes persistentes.
-- **Beneficio:** enrutamiento flexible por exchange, colas por suscriptor, DLX nativo.
-- **Costo:** no hay reproducción histórica de eventos como en Kafka; el broker es un punto de fallo que habría que clusterizar en producción.
+- **Alternativas:** RabbitMQ (descartado: su cliente JMS no implementa `Session.setMessageListener`, por lo que no sirve para un MDB; ver D-3); Kafka (retención y reproducción del log, mayor carga operativa y sin JMS); MQTT puro (orientado a dispositivos, pocas garantías de enrutamiento).
+- **Decisión:** Artemis con colas durables y mensajes persistentes. Cumple el MDB (JMS nativo) y habla MQTT y AMQP.
+- **Beneficio:** JMS nativo, colas por suscriptor sobre un tópico, reintentos y DLQ configurables por destino.
+- **Costo:** no hay reproducción histórica de eventos como en Kafka; el broker es un punto de fallo que habría que clusterizar en producción; se aparta del literal "RabbitMQ" del enunciado.
 - **Estado:** aceptada.
 
-### D-3. Consumo con MDB sobre JMS (cliente JMS de RabbitMQ)
+### D-3. Consumo con MDB sobre JMS (Artemis)
 - **Drivers:** RC-2.
-- **Alternativas:** cliente AMQP directo; broker JMS nativo (ActiveMQ Artemis); Kafka con puente.
-- **Decisión:** MDB con `rabbitmq-jms` como proveedor JMS, conservando RabbitMQ.
-- **Evidencia:** la prueba `jms-probe/` consume desde Java por JMS la cola AMQP existente. Hallazgo: los mensajes publicados por AMQP llegan como `BytesMessage`, no `TextMessage`; el MDB debe tratar ambos tipos. `JMSMessageID` coincide con el `reportId`.
-- **Costo:** dependencia adicional y configuración del resource adapter en el servidor de aplicaciones. Payara exige un adaptador JCA para conectar un MDB con RabbitMQ y el adaptador genérico JMS evaluado está verificado con WildFly, por lo que el equipo adopta **WildFly 38 / Jakarta EE 10**. **Falta validar el MDB dentro del servidor**, no solo con cliente standalone.
-- **Estado:** MDB confirmado como obligatorio. Los dos servicios arrancan en WildFly 38; queda pendiente validar el spike del MDB. Plan B: ActiveMQ Artemis.
+- **Alternativas:** RabbitMQ con `rabbitmq-jms`; cliente AMQP directo (no es MDB); Kafka con puente.
+- **Evidencia del descarte:** el spike en WildFly 38 con RabbitMQ despliega el MDB y el resource adapter, pero al activar el consumo falla con `UnsupportedOperationException` en `RMQSession.setMessageListener`.
+- **Decisión:** MDB sobre Artemis, con pooled connection factory `artemis-remote-cf`.
+- **Evidencia de viabilidad (`jms-probe/`, Artemis 2.37.0):** consumo asíncrono con `MessageListener` (5 de 5 reportes), lectura de la cola de suscripción por su nombre completo `disaster.events::notifications.disaster-registered` y paso a `disaster.registration.dlq` tras 5 entregas fallidas.
+- **Costo:** el MDB debe validarse dentro de WildFly (la prueba fue con cliente standalone); el literal "RabbitMQ" del enunciado se sustituye por Artemis, que habla MQTT.
+- **Estado:** aceptada.
 
 ### D-4. Idempotencia por `reportId`
 - **Drivers:** QA-3.
@@ -145,17 +146,17 @@ sequenceDiagram
 
 | ID | Riesgo | Mitigación |
 |---|---|---|
-| R-1 | MDB con `rabbitmq-jms` no funciona dentro del servidor de aplicaciones (WildFly). | Probar el MDB temprano; plan B con Artemis. |
+| R-1 | El MDB sobre Artemis no funciona en WildFly con el pooled connection factory remoto. | Probar el MDB temprano; usar el subsistema de mensajería embebido de WildFly como alternativa. |
 | R-2 | Registro cae después de persistir y antes de publicar el evento; el desastre queda sin notificar. | Publicar con confirmaciones y reprocesar; patrón outbox como mejora si se justifica. |
-| R-3 | Un solo nodo de RabbitMQ es punto único de fallo. | Aceptado en el taller; clúster en un entorno real. |
+| R-3 | Un solo nodo de Artemis es punto único de fallo. | Aceptado en el taller; clúster en un entorno real. |
 | R-4 | Credenciales de desarrollo en los manifiestos. | Declarado como diferido (seguridad). |
 
 ## 8. Trazabilidad
 
 | Escenario | Decisión | Elemento | Evidencia |
 |---|---|---|---|
-| QA-1 | D-1, D-2, D-5 | RabbitMQ, colas durables | Prueba: detener Registro, publicar, reiniciar |
+| QA-1 | D-1, D-2, D-5 | Artemis, colas durables | Prueba: detener Registro, publicar, reiniciar |
 | QA-2 | D-1, D-2 | `disaster.events` + cola por suscriptor | Prueba: agregar una cola y verificar recepción |
 | QA-3 | D-4 | Registro, PostgreSQL | Simulador con `--duplicate` |
-| QA-4 | D-2 | RabbitMQ, servicios | Medición pendiente |
+| QA-4 | D-2 | Artemis, servicios | Medición pendiente |
 | QA-5 | D-5, D-6 | Notificaciones, DLQ | Prueba: apagar MailHog |
