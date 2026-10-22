@@ -2,7 +2,12 @@
 
 Módulo de un sistema de gestión de emergencias y desastres que **recibe de forma asíncrona** los reportes de un desastre, los **registra** y **notifica** a los sistemas suscritos por mensajería, y a las personas por correo electrónico (JavaMail) y SMS (simulado).
 
-Arquitectura de microservicios Jakarta EE (WildFly 38) con MDB sobre ActiveMQ Artemis, empaquetados con Docker y desplegables en Kubernetes. El diseño está en [`docs/arquitectura.md`](docs/arquitectura.md) y los contratos de mensajes en [`docs/contracts.md`](docs/contracts.md).
+Arquitectura de microservicios Jakarta EE (WildFly 38) con MDB sobre ActiveMQ Artemis, empaquetados con Docker y desplegables en Kubernetes.
+
+**Documentación del diseño:**
+- [`docs/diseno-arquitectonico.md`](docs/diseno-arquitectonico.md): resumen del diseño (componentes, flujo y decisiones principales).
+- [`docs/arquitectura.md`](docs/arquitectura.md): documento completo (escenarios de calidad, vistas, decisiones con sus trade-offs, riesgos, trazabilidad y resultados de las pruebas).
+- [`docs/contracts.md`](docs/contracts.md): contratos de los mensajes y destinos del broker.
 
 ```
 Sistema emisor / simulador ──> Artemis: cola disaster.registration.in
